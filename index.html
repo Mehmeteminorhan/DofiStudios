@@ -4786,17 +4786,6 @@
                 amount: amount
             });
 
-            // Tahsilat kaydı da ekle (istatistikler için)
-            payments.push({
-                id: crypto.randomUUID(),
-                date: date,
-                customerId: null,
-                amount: amount,
-                paymentAccountId: accountId,
-                notes: description,
-                type: 'Para Ekleme'
-            });
-
             saveData(true, true); // Zorla Firebase'e gönder
             renderCashFlow();
             closeModal('addMoneyModal');

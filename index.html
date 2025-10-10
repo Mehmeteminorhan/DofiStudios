@@ -777,6 +777,14 @@
                     rm.minStock = parseFloat(rm.minStock) || 0;
                 }
             });
+            
+            // Ensure accounts have transactions array
+            accounts.forEach(account => {
+                if (!account.transactions) {
+                    account.transactions = [];
+                    console.log('🔍 Hesap transaction array\'i oluşturuldu:', account.name);
+                }
+            });
         }
 
         function handleClearAllData() {
@@ -1559,18 +1567,28 @@
                 channelInfo = 'Bireysel Satış'; 
             } 
             
-            const product = (products || []).find(p => p.id === sale.productId);
-            const productName = product?.name || 'Bilinmeyen Ürün';
-            let variantName = '';
+            // Hızlı satış mı kontrol et
+            let productName, variantName = '';
+            let totalCost;
             
-            if (sale.variantId && product) {
-                const variant = product.variants?.find(v => v.id === sale.variantId);
-                variantName = variant ? ` - ${variant.name}` : '';
+            if (sale.isQuickSale) {
+                // Hızlı satış - direkt productName kullan
+                productName = sale.productName || 'Hızlı Satış';
+                totalCost = sale.totalCost || 0;
+            } else {
+                // Normal satış - ürün sisteminden al
+                const product = (products || []).find(p => p.id === sale.productId);
+                productName = product?.name || 'Bilinmeyen Ürün';
+                
+                if (sale.variantId && product) {
+                    const variant = product.variants?.find(v => v.id === sale.variantId);
+                    variantName = variant ? ` - ${variant.name}` : '';
+                }
+                
+                // Satışın toplam maliyetini hesapla
+                const averageUnitCost = getAverageUnitCostForProduct(sale.productId, sale.variantId);
+                totalCost = averageUnitCost * sale.quantity;
             }
-            
-            // Satışın toplam maliyetini hesapla
-            const averageUnitCost = getAverageUnitCostForProduct(sale.productId, sale.variantId);
-            const totalCost = averageUnitCost * sale.quantity;
             
             return `<tr class="removable" data-id="${sale.id}">
                 <td>${sale.date}</td>
@@ -1654,7 +1672,7 @@
                             </div>
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-2">KDV Oranı (%)</label>
-                                <input type="number" name="quickVatRate" value="20" placeholder="KDV oranı" required class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                                <input type="number" name="quickVatRate" value="0" min="0" max="100" placeholder="KDV oranı" class="w-full px-3 py-2 border border-gray-300 rounded-md">
                             </div>
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-2">Müşteri/Kanal</label>
@@ -1665,8 +1683,14 @@
                                 </select>
                             </div>
                             <div id="quickCustomerDiv" class="hidden">
-                                <label class="block text-sm font-medium text-gray-700 mb-2">Müşteri Adı</label>
-                                <input type="text" name="quickCustomerName" placeholder="Müşteri adı" class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Müşteri Seçin</label>
+                                <select name="quickCustomerId" class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                                    <option value="">Müşteri seçin...</option>
+                                </select>
+                                <div class="mt-2">
+                                    <label class="block text-sm font-medium text-gray-700 mb-2">Yeni Müşteri Ekle</label>
+                                    <input type="text" name="quickCustomerName" placeholder="Yeni müşteri adı" class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                                </div>
                             </div>
                             <div id="quickPlatformDiv" class="hidden">
                                 <label class="block text-sm font-medium text-gray-700 mb-2">Platform Adı</label>
@@ -3010,7 +3034,52 @@
         }
         function openAddAccountModal(type) { document.getElementById('accountModal').innerHTML = getAccountModalHTML(); const form = document.getElementById('accountForm'); form.reset(); document.getElementById('accountModalTitle').textContent = 'Yeni Hesap Ekle'; document.getElementById('accountModalSubmitBtn').textContent = 'Hesap Oluştur'; form.accountId.value = ''; form.accountType.value = type; document.getElementById('bankDetailsDiv').classList.add('hidden'); document.getElementById('creditCardDetailsDiv').classList.add('hidden'); document.getElementById('initialBalanceDiv').classList.remove('hidden'); if (type === 'banka') { document.getElementById('bankDetailsDiv').classList.remove('hidden'); } else if (type === 'kredikarti') { document.getElementById('initialBalanceDiv').classList.add('hidden'); document.getElementById('creditCardDetailsDiv').classList.remove('hidden'); } showModal('accountModal'); }
         function openEditAccountModal(accountId) { document.getElementById('accountModal').innerHTML = getAccountModalHTML(); const account = accounts.find(a => a.id === accountId); if (!account) return; const form = document.getElementById('accountForm'); form.reset(); document.getElementById('accountModalTitle').textContent = 'Hesabı Düzenle'; document.getElementById('accountModalSubmitBtn').textContent = 'Güncelle'; form.accountId.value = account.id; form.accountType.value = account.type; form.accountName.value = account.name; document.getElementById('bankDetailsDiv').classList.add('hidden'); document.getElementById('creditCardDetailsDiv').classList.add('hidden'); document.getElementById('initialBalanceDiv').classList.remove('hidden'); if (account.type === 'nakit' || account.type === 'banka') { form.initialBalance.value = account.initialBalance || 0; } if (account.type === 'banka') { document.getElementById('bankDetailsDiv').classList.remove('hidden'); form.bankName.value = account.bankName || ''; form.iban.value = account.iban || ''; } else if (account.type === 'kredikarti') { document.getElementById('initialBalanceDiv').classList.add('hidden'); document.getElementById('creditCardDetailsDiv').classList.remove('hidden'); form.creditCardLimit.value = account.limit || 0; form.linkedAccountId.value = account.linkedAccountId || ''; } showModal('accountModal'); }
-        function handleAccountFormSubmit() { const form = document.getElementById('accountForm'); const accountId = form.accountId.value; if (accountId) { const account = accounts.find(a => a.id === accountId); if(account) { account.name = form.accountName.value; if (account.type === 'nakit' || account.type === 'banka') { account.initialBalance = parseFloat(form.initialBalance.value) || 0; } if (account.type === 'banka') { account.bankName = form.bankName.value; account.iban = form.iban.value; } else if (account.type === 'kredikarti') { account.limit = parseFloat(form.creditCardLimit.value) || 0; account.linkedAccountId = form.linkedAccountId.value; } } } else { const newAccount = { id: crypto.randomUUID(), type: form.accountType.value, name: form.accountName.value, initialBalance: parseFloat(form.initialBalance.value) || 0, }; if (newAccount.type === 'banka') { newAccount.bankName = form.bankName.value; newAccount.iban = form.iban.value; } else if (newAccount.type === 'kredikarti') { newAccount.limit = parseFloat(form.creditCardLimit.value) || 0; newAccount.linkedAccountId = form.linkedAccountId.value; } accounts.push(newAccount); } renderCashFlow(); saveData(); closeModal('accountModal'); }
+        function handleAccountFormSubmit() { 
+            const form = document.getElementById('accountForm'); 
+            const accountId = form.accountId.value; 
+            
+            if (accountId) { 
+                // Hesap düzenleme
+                const account = accounts.find(a => a.id === accountId); 
+                if(account) { 
+                    account.name = form.accountName.value; 
+                    if (account.type === 'nakit' || account.type === 'banka') { 
+                        account.initialBalance = parseFloat(form.initialBalance.value) || 0; 
+                    } 
+                    if (account.type === 'banka') { 
+                        account.bankName = form.bankName.value; 
+                        account.iban = form.iban.value; 
+                    } else if (account.type === 'kredikarti') { 
+                        account.limit = parseFloat(form.creditCardLimit.value) || 0; 
+                        account.linkedAccountId = form.linkedAccountId.value; 
+                    } 
+                } 
+            } else { 
+                // Yeni hesap oluşturma
+                const newAccount = { 
+                    id: crypto.randomUUID(), 
+                    type: form.accountType.value, 
+                    name: form.accountName.value, 
+                    initialBalance: parseFloat(form.initialBalance.value) || 0,
+                    transactions: [] // Transaction array'ini başlat
+                }; 
+                
+                if (newAccount.type === 'banka') { 
+                    newAccount.bankName = form.bankName.value; 
+                    newAccount.iban = form.iban.value; 
+                } else if (newAccount.type === 'kredikarti') { 
+                    newAccount.limit = parseFloat(form.creditCardLimit.value) || 0; 
+                    newAccount.linkedAccountId = form.linkedAccountId.value; 
+                } 
+                
+                accounts.push(newAccount);
+                console.log('🔍 Yeni Hesap Oluşturuldu:', newAccount);
+            } 
+            
+            renderCashFlow(); 
+            saveData(); 
+            closeModal('accountModal'); 
+        }
         function openCustomParamModal(paramId = null) { const form = document.getElementById('customParamForm'); form.reset(); if(paramId) { const param = customParameters.find(p => p.id === paramId); if(param) { document.getElementById('customParamModalTitle').textContent = 'Parametreyi Düzenle'; document.getElementById('customParamModalSubmitBtn').textContent = 'Güncelle'; form.paramId.value = param.id; form.paramName.value = param.name; form.paramType.value = param.type; form.paramValue.value = param.value; } } else { document.getElementById('customParamModalTitle').textContent = 'Yeni Özel Parametre Ekle'; document.getElementById('customParamModalSubmitBtn').textContent = 'Ekle'; form.paramId.value = ''; } showModal('customParamModal'); }
         function handleCustomParamFormSubmit() { const form = document.getElementById('customParamForm'); const paramId = form.paramId.value; const paramData = { name: form.paramName.value, type: form.paramType.value, value: parseFloat(form.paramValue.value) || 0 }; if(paramId) { const index = customParameters.findIndex(p => p.id === paramId); if(index > -1) { customParameters[index] = {...customParameters[index], ...paramData}; } } else { customParameters.push({ id: crypto.randomUUID(), ...paramData}); } renderParameters(); saveData(); closeModal('customParamModal'); }
         function updateSupplierField(id, field, value) { const s = suppliers.find(s => s.id === id); if(s) s[field] = value; saveData(); }
@@ -3276,7 +3345,41 @@
                     renderProductionLog(); 
                     renderMaterials(); // Malzeme listesini güncelle
                 },
-                sale: () => { salesLog = salesLog.filter(s => s.id !== id); renderSalesLog(); renderCustomers(); },
+                sale: () => { 
+                    const sale = salesLog.find(s => s.id === id);
+                    if (sale) {
+                        // Hesap hareketini sil
+                        if (sale.paymentAccountId && sale.paymentMethod !== 'cariye') {
+                            const account = accounts.find(a => a.id === sale.paymentAccountId);
+                            if (account && account.transactions) {
+                                // Satış ile ilgili transaction'ı bul ve sil
+                                const transactionIndex = account.transactions.findIndex(tx => 
+                                    tx.type === 'Satış Geliri' && 
+                                    tx.date === sale.date && 
+                                    tx.amount === sale.totalAmount
+                                );
+                                if (transactionIndex !== -1) {
+                                    account.transactions.splice(transactionIndex, 1);
+                                    console.log('Satış hareketi hesaptan silindi');
+                                }
+                            }
+                        }
+                        
+                        // Cariye satışsa müşteri bakiyesini geri al
+                        if (sale.paymentMethod === 'cariye' && sale.customerId) {
+                            const customer = customers.find(c => c.id === sale.customerId);
+                            if (customer) {
+                                customer.balance += sale.totalAmount;
+                                console.log('Müşteri bakiyesi güncellendi');
+                            }
+                        }
+                    }
+                    
+                    salesLog = salesLog.filter(s => s.id !== id); 
+                    renderSalesLog(); 
+                    renderCustomers();
+                    renderCashFlow();
+                },
                 failedPrint: () => { failedPrints = failedPrints.filter(f => f.id !== id); renderFailedPrints(); },
                 account: () => { accounts = accounts.filter(a => a.id !== id); renderCashFlow(); },
                 customParameter: () => { customParameters = customParameters.filter(p => p.id !== id); renderParameters(); },
@@ -3349,7 +3452,43 @@
             saveData();
         }
         function openUpdateStockModal(materialId) { document.getElementById('updateStockMaterialId').value = materialId; document.getElementById('replenishDate').value = new Date().toISOString().slice(0, 10); document.getElementById('addedStock').value = ''; document.getElementById('newPrice').value = ''; showModal('updateStockModal'); }
-        function handleStockUpdate() { const materialId = document.getElementById('updateStockMaterialId').value; const addedStock = parseFloat(document.getElementById('addedStock').value); const newPrice = parseFloat(document.getElementById('newPrice').value); const date = document.getElementById('replenishDate').value; const paymentAccountId = document.getElementById('paymentAccountId').value; const material = rawMaterials.find(m => m.id === materialId); if (!material || isNaN(addedStock) || addedStock <= 0 || isNaN(newPrice) || newPrice < 0 || !paymentAccountId) { showMessageModal("Hata", "Lütfen tüm alanları geçerli bir şekilde doldurun."); return; } const cost = addedStock * newPrice; if(!material.stockHistory) material.stockHistory = []; material.stockHistory.push({ id: crypto.randomUUID(), date, quantity: addedStock, price: newPrice, paymentAccountId, cost }); const totalStock = material.stockHistory.reduce((sum, item) => sum + item.quantity, 0); const totalCost = material.stockHistory.reduce((sum, item) => sum + (item.quantity * item.price), 0); material.averageCost = totalStock > 0 ? totalCost / totalStock : 0; renderAllTabsAndModals(); closeModal('updateStockModal'); saveData(); }
+        function handleStockUpdate() { 
+            const materialId = document.getElementById('updateStockMaterialId').value; 
+            const addedStock = parseFloat(document.getElementById('addedStock').value); 
+            const newPrice = parseFloat(document.getElementById('newPrice').value); 
+            const date = document.getElementById('replenishDate').value; 
+            const paymentAccountId = document.getElementById('paymentAccountId').value; 
+            
+            const material = rawMaterials.find(m => m.id === materialId); 
+            if (!material || isNaN(addedStock) || addedStock <= 0 || isNaN(newPrice) || newPrice < 0 || !paymentAccountId) { 
+                showMessageModal("Hata", "Lütfen tüm alanları geçerli bir şekilde doldurun."); 
+                return; 
+            } 
+            
+            const cost = addedStock * newPrice; 
+            if(!material.stockHistory) material.stockHistory = []; 
+            material.stockHistory.push({ id: crypto.randomUUID(), date, quantity: addedStock, price: newPrice, paymentAccountId, cost }); 
+            
+            // Hesap transaction'ı da ekle
+            const account = accounts.find(a => a.id === paymentAccountId);
+            if (account) {
+                if (!account.transactions) account.transactions = [];
+                account.transactions.push({
+                    id: crypto.randomUUID(),
+                    date: date,
+                    type: 'Alım',
+                    description: `${material.name} (${addedStock} ${material.unit || 'adet'})`,
+                    amount: -cost // Negatif tutar (çıkış)
+                });
+            }
+            
+            const totalStock = material.stockHistory.reduce((sum, item) => sum + item.quantity, 0); 
+            const totalCost = material.stockHistory.reduce((sum, item) => sum + (item.quantity * item.price), 0); 
+            material.averageCost = totalStock > 0 ? totalCost / totalStock : 0; 
+            renderAllTabsAndModals(); 
+            closeModal('updateStockModal'); 
+            saveData(); 
+        }
         function openSaleModal() { 
             document.getElementById('saleForm').reset(); 
             document.getElementById('saleForm').saleProductSelect.innerHTML = '<option value="">Ürün Seçin</option>' + (products || []).map(p => `<option value="${p.id}">${p.name}</option>`).join(''); 
@@ -3382,6 +3521,12 @@
             
             if (channel === 'cari') {
                 customerDiv.classList.remove('hidden');
+                // Müşteri listesini doldur
+                const customerSelect = document.querySelector('select[name="quickCustomerId"]');
+                if (customerSelect) {
+                    customerSelect.innerHTML = '<option value="">Müşteri seçin...</option>' + 
+                        customers.map(c => `<option value="${c.id}">${c.name}</option>`).join('');
+                }
             } else if (channel === 'platform') {
                 platformDiv.classList.remove('hidden');
             }
@@ -3405,7 +3550,7 @@
             const quantity = parseInt(formData.get('quickQuantity')) || 1;
             const gramage = parseFloat(formData.get('quickGramage')) || 0;
             const unitPrice = parseFloat(formData.get('quickUnitPrice')) || 0;
-            const vatRate = parseFloat(formData.get('quickVatRate')) || 20;
+            const vatRate = parseFloat(formData.get('quickVatRate')) || 0;
             const channel = formData.get('quickChannel');
             const paymentMethod = formData.get('quickPaymentMethod');
             const paymentAccountId = formData.get('quickPaymentAccountId');
@@ -3421,23 +3566,30 @@
             let customerId = null;
             
             if (channel === 'cari') {
-                const customerName = formData.get('quickCustomerName');
-                if (!customerName) {
-                    showMessageModal("Hata", "Lütfen müşteri adı girin.");
-                    return;
-                }
-                customerInfo = customerName;
-                // Müşteri varsa ID'yi bul, yoksa yeni müşteri oluştur
-                let customer = customers.find(c => c.name.toLowerCase() === customerName.toLowerCase());
-                if (!customer) {
+                const selectedCustomerId = formData.get('quickCustomerId');
+                const newCustomerName = formData.get('quickCustomerName');
+                
+                let customer = null;
+                
+                if (selectedCustomerId) {
+                    // Mevcut müşteri seçildi
+                    customer = customers.find(c => c.id === selectedCustomerId);
+                    customerInfo = customer ? customer.name : 'Bilinmeyen Müşteri';
+                    customerId = selectedCustomerId;
+                } else if (newCustomerName && newCustomerName.trim()) {
+                    // Yeni müşteri eklendi
                     customer = {
                         id: crypto.randomUUID(),
-                        name: customerName,
+                        name: newCustomerName.trim(),
                         balance: 0
                     };
                     customers.push(customer);
+                    customerInfo = customer.name;
+                    customerId = customer.id;
+                } else {
+                    showMessageModal("Hata", "Lütfen mevcut müşteri seçin veya yeni müşteri adı girin.");
+                    return;
                 }
-                customerId = customer.id;
             } else if (channel === 'platform') {
                 const platformName = formData.get('quickPlatformName');
                 if (platformName) {
@@ -3447,8 +3599,21 @@
             
             // Hesaplama
             const subtotal = quantity * unitPrice;
-            const vatAmount = subtotal * (vatRate / 100);
+            const vatAmount = vatRate > 0 ? subtotal * (vatRate / 100) : 0;
             const totalAmount = subtotal + vatAmount;
+            
+            // Debug logları
+            console.log('🔍 Hızlı Satış Hesaplama:');
+            console.log('- KDV Oranı:', vatRate);
+            console.log('- Birim Fiyat:', unitPrice);
+            console.log('- Adet:', quantity);
+            console.log('- Ara Toplam:', subtotal);
+            console.log('- KDV Tutarı:', vatAmount);
+            console.log('- Toplam Tutar:', totalAmount);
+            
+            // Maliyet hesaplama (gram başına 0.5 TL)
+            const totalCost = gramage > 0 ? (gramage * quantity * 0.5) : 0;
+            const realizedProfit = totalAmount - totalCost;
             
             // Satış kaydı oluştur
             const saleEntry = {
@@ -3463,30 +3628,19 @@
                 totalAmount: totalAmount,
                 customerInfo: customerInfo,
                 customerId: customerId,
+                channel: channel, // Kanal bilgisini ekle
                 paymentMethod: paymentMethod,
                 paymentAccountId: paymentAccountId,
-                totalCost: 0, // Sistem dışı ürün, maliyet yok
-                realizedProfit: totalAmount, // Tüm tutar kar olarak kabul edilir
+                totalCost: totalCost,
+                realizedProfit: realizedProfit,
                 notes: notes,
                 isQuickSale: true // Hızlı satış işareti
             };
             
             salesLog.push(saleEntry);
             
-            // Ödeme işlemleri
-            if (paymentMethod !== 'cariye' && paymentAccountId) {
-                const account = accounts.find(a => a.id === paymentAccountId);
-                if (account) {
-                    if (!account.transactions) account.transactions = [];
-                    account.transactions.push({
-                        id: crypto.randomUUID(),
-                        date: date,
-                        type: 'Satış Geliri',
-                        description: `${productName} satışı`,
-                        amount: totalAmount
-                    });
-                }
-            } else if (paymentMethod === 'cariye' && customerId) {
+            // Ödeme işlemleri - Hızlı satışta hesap transaction'ı ekleme, sadece cariye için müşteri bakiyesi güncelle
+            if (paymentMethod === 'cariye' && customerId) {
                 const customer = customers.find(c => c.id === customerId);
                 if (customer) {
                     customer.balance -= totalAmount;
@@ -4289,7 +4443,16 @@
             const customerSales = salesLog.filter(s => s.customerId === customerId);
             if (customerSales.length === 0) return `<p class="text-sm text-gray-500">Bu müşteriye henüz satış yapılmamış.</p>`;
             const salesByProduct = customerSales.reduce((acc, sale) => {
-                const productName = products.find(p => p.id === sale.productId)?.name || 'Bilinmeyen Ürün';
+                let productName;
+                
+                if (sale.isQuickSale) {
+                    // Hızlı satış - direkt productName kullan
+                    productName = sale.productName || 'Hızlı Satış';
+                } else {
+                    // Normal satış - sistem ürününden al
+                    productName = products.find(p => p.id === sale.productId)?.name || 'Bilinmeyen Ürün';
+                }
+                
                 acc[productName] = (acc[productName] || 0) + sale.quantity;
                 return acc;
             }, {});
@@ -4323,11 +4486,32 @@
                 showMessageModal("Hata", "Lütfen tüm zorunlu alanları doldurun.");
                 return;
             }
+            
+            // Müşteri bakiyesini güncelle
+            const customer = customers.find(c => c.id === newPayment.customerId);
+            if (customer) {
+                customer.balance += newPayment.amount;
+            }
+            
+            // Hesap hareketi oluştur
+            const account = accounts.find(a => a.id === newPayment.paymentAccountId);
+            if (account) {
+                if (!account.transactions) account.transactions = [];
+                account.transactions.push({
+                    id: crypto.randomUUID(),
+                    date: newPayment.date,
+                    type: 'Tahsilat',
+                    description: `Müşteri: ${customer?.name || 'Bilinmeyen'} - ${newPayment.notes || 'Ödeme'}`,
+                    amount: newPayment.amount
+                });
+            }
+            
             payments.push(newPayment);
             renderCustomers();
             renderCashFlow();
             saveData();
             closeModal('addPaymentModal');
+            showNotification(`💰 ${newPayment.amount.toFixed(2)} TL tahsilat alındı`, 'success', 3000);
         }
 
         // --- HTML HELPER FUNCTIONS ---
@@ -4980,12 +5164,22 @@
                         <tbody>`;
             let grandTotal = 0;
             customerSales.forEach(sale => {
-                const product = products.find(p => p.id === sale.productId);
+                let productName;
+                
+                if (sale.isQuickSale) {
+                    // Hızlı satış - direkt productName kullan
+                    productName = sale.productName || 'Hızlı Satış';
+                } else {
+                    // Normal satış - sistem ürününden al
+                    const product = products.find(p => p.id === sale.productId);
+                    productName = product ? product.name : 'Silinmiş Ürün';
+                }
+                
                 const total = sale.quantity * sale.unitPrice;
                 grandTotal += sale.totalAmount; // Using totalAmount which includes VAT
                 content += `<tr>
                     <td class="p-2 border-b">${new Date(sale.date).toLocaleDateString('tr-TR')}</td>
-                    <td class="p-2 border-b">${product ? product.name : 'Silinmiş Ürün'}</td>
+                    <td class="p-2 border-b">${productName}</td>
                     <td class="p-2 border-b">${sale.quantity}</td>
                     <td class="p-2 border-b">${sale.unitPrice.toFixed(2)} TL</td>
                     <td class="p-2 border-b">${total.toFixed(2)} TL</td>
@@ -5002,17 +5196,188 @@
             setTimeout(() => { printWindow.print(); printWindow.close(); }, 250);
         }
 
+        function deleteAccountTransaction(accountId, txId, txType) {
+            showConfirmModal(
+                "İşlemi Sil",
+                "Bu işlemi silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.",
+                () => {
+                    console.log('Silme işlemi başlatılıyor:', { accountId, txId, txType });
+                    
+                    const account = accounts.find(a => a.id === accountId);
+                    if (!account) {
+                        console.error('Hesap bulunamadı:', accountId);
+                        return;
+                    }
+                    
+                    // Debug: Mevcut transaction'ları listele
+                    console.log('Hesap transaction\'ları:', account.transactions);
+                    console.log('Aranan txId:', txId);
+                    
+                    let deleted = false;
+                    
+                    // İşlem türüne göre sil
+                    if (txType === 'Para Ekleme' || txType === 'Satış Geliri') {
+                        // Hesap transaction'ından sil
+                        if (account.transactions) {
+                            const originalLength = account.transactions.length;
+                            
+                            // Önce ID ile ara
+                            let foundById = account.transactions.find(t => t.id === txId);
+                            if (foundById) {
+                                account.transactions = account.transactions.filter(t => t.id !== txId);
+                                deleted = true;
+                                console.log('Transaction ID ile silindi:', txId);
+                            } else {
+                                // ID bulunamazsa, description ve amount ile ara
+                                console.log('ID bulunamadı, description ile aranıyor...');
+                                const transactionIndex = account.transactions.findIndex(t => 
+                                    t.type === txType && 
+                                    t.description && 
+                                    t.description.includes(txId)
+                                );
+                                if (transactionIndex !== -1) {
+                                    account.transactions.splice(transactionIndex, 1);
+                                    deleted = true;
+                                    console.log('Transaction description ile silindi');
+                                }
+                            }
+                            
+                            console.log('Hesap transaction silindi:', deleted);
+                        }
+                    } else if (txType === 'Satış') {
+                        // Satış kaydından sil
+                        const sale = salesLog.find(s => s.id === txId);
+                        if (sale) {
+                            // Önce hesap hareketini sil
+                            if (account.transactions) {
+                                const transactionIndex = account.transactions.findIndex(t => 
+                                    t.type === 'Satış Geliri' && 
+                                    t.date === sale.date && 
+                                    Math.abs(t.amount - sale.totalAmount) < 0.01
+                                );
+                                if (transactionIndex !== -1) {
+                                    account.transactions.splice(transactionIndex, 1);
+                                    console.log('Satış hesap hareketi silindi');
+                                }
+                            }
+                            
+                            // Cariye satışsa müşteri bakiyesini geri al
+                            if (sale.paymentMethod === 'cariye' && sale.customerId) {
+                                const customer = customers.find(c => c.id === sale.customerId);
+                                if (customer) {
+                                    customer.balance += sale.totalAmount;
+                                    console.log('Müşteri bakiyesi geri alındı');
+                                }
+                            }
+                            
+                            // Satış kaydını sil
+                            salesLog = salesLog.filter(s => s.id !== txId);
+                            deleted = true;
+                            console.log('Satış kaydı silindi');
+                        }
+                    } else if (txType === 'Tahsilat') {
+                        // Tahsilat kaydını sil
+                        const payment = payments.find(p => p.id === txId);
+                        if (payment) {
+                            // Müşteri bakiyesini geri al
+                            const customer = customers.find(c => c.id === payment.customerId);
+                            if (customer) {
+                                customer.balance -= payment.amount;
+                                console.log('Müşteri bakiyesi geri alındı');
+                            }
+                            
+                            // Tahsilat kaydını sil
+                            payments = payments.filter(p => p.id !== txId);
+                            deleted = true;
+                            console.log('Tahsilat kaydı silindi');
+                        }
+                    } else if (txType === 'Alım') {
+                        // Hammadde alımını sil
+                        rawMaterials.forEach(rm => {
+                            if (rm.stockHistory) {
+                                const originalLength = rm.stockHistory.length;
+                                rm.stockHistory = rm.stockHistory.filter(h => h.id !== txId);
+                                if (rm.stockHistory.length < originalLength) {
+                                    deleted = true;
+                                    console.log('Hammadde alımı silindi');
+                                }
+                            }
+                        });
+                    }
+                    
+                    if (deleted) {
+                        saveData();
+                        renderCashFlow();
+                        renderAccountDetails(accountId);
+                        showNotification('İşlem başarıyla silindi', 'success', 3000);
+                    } else {
+                        // Son çare: Tüm transaction'ları listele ve kullanıcıya göster
+                        console.error('İşlem bulunamadı! Mevcut transaction\'lar:');
+                        if (account.transactions) {
+                            account.transactions.forEach((t, index) => {
+                                console.log(`${index}: ID=${t.id}, Type=${t.type}, Desc=${t.description}, Amount=${t.amount}`);
+                            });
+                        }
+                        showNotification('İşlem silinemedi - kayıt bulunamadı. Console\'u kontrol edin.', 'error', 5000);
+                    }
+                }
+            );
+        }
+
+        function forceDeleteTransaction(accountId, txId, txType) {
+            showConfirmModal(
+                "Zorla Sil",
+                "Bu işlemi zorla silmek istediğinizden emin misiniz? Bu işlem geri alınamaz ve tüm veriler temizlenecek.",
+                () => {
+                    console.log('Zorla silme işlemi başlatılıyor:', { accountId, txId, txType });
+                    
+                    const account = accounts.find(a => a.id === accountId);
+                    if (!account) {
+                        console.error('Hesap bulunamadı:', accountId);
+                        return;
+                    }
+                    
+                    let deleted = false;
+                    
+                    // Tüm transaction'ları listele
+                    console.log('Mevcut transaction\'lar:');
+                    if (account.transactions) {
+                        account.transactions.forEach((t, index) => {
+                            console.log(`${index}: ID=${t.id}, Type=${t.type}, Desc=${t.description}, Amount=${t.amount}`);
+                        });
+                        
+                        // İlk eşleşen transaction'ı sil
+                        const transactionIndex = account.transactions.findIndex(t => 
+                            t.type === txType || 
+                            t.id === txId || 
+                            (t.description && t.description.includes(txId))
+                        );
+                        
+                        if (transactionIndex !== -1) {
+                            const deletedTransaction = account.transactions.splice(transactionIndex, 1)[0];
+                            deleted = true;
+                            console.log('Transaction zorla silindi:', deletedTransaction);
+                        }
+                    }
+                    
+                    if (deleted) {
+                        saveData();
+                        renderCashFlow();
+                        renderAccountDetails(accountId);
+                        showNotification('İşlem zorla silindi', 'success', 3000);
+                    } else {
+                        showNotification('Hiçbir işlem silinemedi', 'error', 3000);
+                    }
+                }
+            );
+        }
+
         function renderAccountDetails(accountId) {
             currentOpenAccountId = accountId; // Store the currently viewed account ID
             const account = accounts.find(a => a.id === accountId);
             if (!account) return;
 
-            const purchases = rawMaterials.flatMap(rm => (rm.stockHistory || []).map(h => ({ ...h, type: 'Alım', txId: h.id, desc: `${rm.name} (${h.quantity} ${rm.unit})` }))).filter(p => p.paymentAccountId === accountId);
-            const sales = salesLog.map(s => ({ ...s, type: 'Satış', txId: s.id, desc: `${products.find(p=>p.id === s.productId)?.name || ''}` })).filter(s => s.paymentAccountId === accountId);
-            const customerPayments = payments.filter(p => p.customerId).map(p => ({ ...p, type: 'Tahsilat', txId: p.id, desc: `${customers.find(c=>c.id === p.customerId)?.name || ''}` })).filter(p => p.paymentAccountId === accountId);
-            const materialPayments = payments.filter(p => p.type === 'Malzeme').map(p => ({ ...p, type: 'Malzeme', txId: p.id, desc: p.notes })).filter(p => p.paymentAccountId === accountId);
-            
-            // Hesap işlemlerini de ekle (gider kayıtları dahil)
+            // Sadece hesap transaction'larını kullan (çift kayıt önlemek için)
             const accountTransactions = (account.transactions || []).map(t => ({ 
                 ...t, 
                 type: t.type, 
@@ -5021,7 +5386,59 @@
                 date: t.date
             }));
             
-            const transactions = [...purchases, ...sales, ...customerPayments, ...materialPayments, ...accountTransactions].sort((a, b) => new Date(b.date) - new Date(a.date));
+            // Sadece hesap transaction'larını kullan (çift kayıt önlemek için)
+            // purchases array'ini kaldırdık çünkü artık hesap transaction'larına ekleniyor
+            
+            // Satış kayıtlarını ekle (hem cariye hem de hızlı satışlar)
+            const sales = salesLog
+                .filter(s => s.paymentAccountId === accountId) // Bu hesaba ait tüm satışlar
+                .map(s => ({ 
+                    ...s, 
+                    type: s.isQuickSale ? 'Satış Geliri' : 'Satış', // Hızlı satış için 'Satış Geliri' türü
+                    txId: s.id, 
+                    desc: s.isQuickSale ? s.productName : (products.find(p=>p.id === s.productId)?.name || 'Bilinmeyen Ürün')
+                }));
+            
+            const customerPayments = payments
+                .filter(p => p.customerId && p.paymentAccountId === accountId)
+                .map(p => ({ 
+                    ...p, 
+                    type: 'Tahsilat', 
+                    txId: p.id, 
+                    desc: `${customers.find(c=>c.id === p.customerId)?.name || 'Bilinmeyen Müşteri'} - ${p.notes || 'Ödeme'}` 
+                }));
+            
+            const materialPayments = payments
+                .filter(p => p.type === 'Malzeme' && p.paymentAccountId === accountId)
+                .map(p => ({ ...p, type: 'Malzeme', txId: p.id, desc: p.notes }));
+            
+            const transactions = [...sales, ...customerPayments, ...materialPayments, ...accountTransactions].sort((a, b) => new Date(b.date) - new Date(a.date));
+            
+            // Debug logları
+            console.log('🔍 Hesap Hareketleri Debug:');
+            console.log('- Hesap ID:', accountId);
+            console.log('- Hesap Bulundu mu?', !!account);
+            console.log('- Hesap Adı:', account?.name);
+            console.log('- Hesap Transaction\'ları var mı?', !!account?.transactions);
+            console.log('- Hesap Transaction Sayısı:', accountTransactions.length);
+            console.log('- Satış Sayısı (tüm satışlar):', sales.length);
+            console.log('- Tahsilat Sayısı:', customerPayments.length);
+            console.log('- Malzeme Ödemesi Sayısı:', materialPayments.length);
+            console.log('- Toplam İşlem Sayısı:', transactions.length);
+            console.log('- Hesap Transaction\'ları:', accountTransactions);
+            console.log('- Satış Kayıtları:', sales);
+            console.log('- Tüm Hesaplar:', accounts.map(a => ({ id: a.id, name: a.name, transactionCount: a.transactions?.length || 0 })));
+            
+            // Her transaction'ın detaylarını logla
+            transactions.forEach((tx, index) => {
+                console.log(`🔍 Transaction ${index}:`, {
+                    type: tx.type,
+                    totalAmount: tx.totalAmount,
+                    amount: tx.amount,
+                    cost: tx.cost,
+                    desc: tx.desc
+                });
+            });
 
             let modalContent = `<h3 class="text-xl font-semibold mb-4">${account.name} - Hesap Hareketleri</h3>
                                 <table class="w-full text-sm"><thead><tr><th>Tarih</th><th>Tür</th><th>Açıklama</th><th>Giriş</th><th>Çıkış</th><th>Eylem</th></tr></thead><tbody>`;
@@ -5029,11 +5446,20 @@
                 let income = '';
                 let expense = '';
                 
-                if (tx.type === 'Satış' || tx.type === 'Tahsilat' || tx.type === 'Para Ekleme') {
+                if (tx.type === 'Satış' || tx.type === 'Satış Geliri' || tx.type === 'Tahsilat' || tx.type === 'Para Ekleme') {
                     income = (tx.totalAmount || tx.amount || 0).toFixed(2);
                 } else if (tx.type === 'Alım' || tx.type === 'Malzeme' || tx.type === 'Gider') {
                     expense = Math.abs(tx.cost || tx.amount || 0).toFixed(2);
                 }
+                
+                // Debug: Her transaction için tutar bilgilerini logla
+                console.log(`🔍 Transaction Debug:`, {
+                    type: tx.type,
+                    totalAmount: tx.totalAmount,
+                    amount: tx.amount,
+                    income: income,
+                    expense: expense
+                });
                 
                 modalContent += `<tr>
                     <td>${new Date(tx.date).toLocaleDateString('tr-TR')}</td>
@@ -5041,7 +5467,13 @@
                     <td>${tx.desc}</td>
                     <td class="text-green-600">${income}</td>
                     <td class="text-red-600">${expense}</td>
-                    <td>${tx.type === 'Gider' ? '<span class="text-gray-400 text-xs">Düzenlenemez</span>' : `<button onclick="openEditTransactionModal('${tx.txId}', '${tx.type}')" class="bg-yellow-500 text-white px-2 py-1 text-xs rounded-md">Düzenle</button>`}</td>
+                    <td>
+                        ${tx.type === 'Gider' ? '<span class="text-gray-400 text-xs">Düzenlenemez</span>' : `
+                            <button onclick="openEditTransactionModal('${tx.txId}', '${tx.type}')" class="bg-yellow-500 text-white px-2 py-1 text-xs rounded-md mr-1">Düzenle</button>
+                            <button onclick="deleteAccountTransaction('${accountId}', '${tx.txId}', '${tx.type}')" class="bg-red-500 text-white px-2 py-1 text-xs rounded-md mr-1">Sil</button>
+                            <button onclick="forceDeleteTransaction('${accountId}', '${tx.txId}', '${tx.type}')" class="bg-red-700 text-white px-2 py-1 text-xs rounded-md">Zorla Sil</button>
+                        `}
+                    </td>
                 </tr>`;
             });
             modalContent += `</tbody></table><div class="mt-6 flex justify-end"><button onclick="closeModal('accountDetailModal')" class="bg-gray-200 px-4 py-2 rounded-md">Kapat</button></div>`;

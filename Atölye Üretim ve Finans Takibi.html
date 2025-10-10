@@ -180,6 +180,7 @@
         <div class="flex flex-col lg:flex-row lg:justify-between lg:items-center mb-6 space-y-4 lg:space-y-0">
             <h1 class="text-2xl lg:text-3xl font-bold text-gray-800">Atölye Üretim & Finans Takibi</h1>
             <div class="flex flex-wrap items-center gap-2">
+                <button onclick="saveData(true, true)" class="bg-purple-600 text-white px-3 py-2 rounded-md hover:bg-purple-700 text-sm">💾 Veri Kaydet</button>
                 <button onclick="importData()" class="bg-green-600 text-white px-3 py-2 rounded-md hover:bg-green-700 text-sm">📥 İçe Aktar</button>
                 <button onclick="exportData()" class="bg-blue-600 text-white px-3 py-2 rounded-md hover:bg-blue-700 text-sm">📤 Dışa Aktar</button>
                 <button onclick="testFirebaseConnection()" class="bg-cyan-600 text-white px-3 py-2 rounded-md hover:bg-cyan-700 text-sm">🔥 Firebase</button>
@@ -214,6 +215,7 @@
     <div id="addMaterialModal" class="modal-backdrop hidden"></div>
     <div id="updateStockModal" class="modal-backdrop hidden"></div>
     <div id="addSaleModal" class="modal-backdrop hidden"></div>
+    <div id="quickSaleModal" class="modal-backdrop hidden"></div>
     <div id="addFailedPrintModal" class="modal-backdrop hidden"></div>
     <div id="accountModal" class="modal-backdrop hidden"></div>
     <div id="customParamModal" class="modal-backdrop hidden"></div>
@@ -256,7 +258,7 @@
         // Firebase konfigürasyonu yukarıda module olarak yüklendi
         
         // --- GLOBAL DATA STORES ---
-        let suppliers = [], customers = [], rawMaterials = [], products = [], recipes = [], productionLog = [], salesLog = [], accounts = [], payments = [], expenses = [], productionPlans = [], failedPrints = [];
+        let suppliers = [], customers = [], rawMaterials = [], materials = [], products = [], recipes = [], productionLog = [], salesLog = [], accounts = [], payments = [], expenses = [], productionPlans = [], failedPrints = [];
         let parameters = {}; // Will hold core parameters and tabOrder
         let customParameters = []; // Will hold user-defined cost parameters
         
@@ -327,7 +329,7 @@
         
         const LOCAL_DATA_KEY = 'atolyeTracker_local_v30'; // Version incremented
         const BACKUP_DATA_KEY = 'atolyeTracker_backup_v30';
-        const AUTO_BACKUP_INTERVAL = 2 * 60 * 1000; // 2 dakikada bir otomatik yedekleme
+        const AUTO_BACKUP_INTERVAL = 30 * 1000; // 30 saniyede bir otomatik yedekleme
         let lastSaveTime = 0;
         let pendingChanges = false;
         let autoBackupTimer = null;
@@ -391,6 +393,13 @@
         function smartSave() {
             if (pendingChanges) {
                 saveData(true, true); // Sessiz ve zorla kaydet
+            } else {
+                // Her durumda Firebase'e gönder
+                saveDataToFirebase({
+                    suppliers, customers, rawMaterials, products, recipes, 
+                    productionLog, salesLog, accounts, parameters, customParameters, 
+                    payments, expenses, materials, productionPlans, failedPrints
+                });
             }
         }
 
@@ -417,31 +426,34 @@
             try {
                 if (window.firebaseDatabase) {
                     const dataRef = window.firebaseDatabase.ref('workshopData');
-                    dataRef.on('value', (snapshot) => {
+                    dataRef.once('value').then((snapshot) => {
                         const data = snapshot.val();
                         if (data) {
-                            // Sadece veri değiştiyse güncelle
-                            const currentData = JSON.stringify({ suppliers, customers, rawMaterials, products, recipes, productionLog, salesLog, accounts, parameters, customParameters, payments, expenses, materials, productionPlans, failedPrints });
-                            const newData = JSON.stringify(data);
-                            
-                            if (currentData !== newData) {
+                            console.log('Firebase\'den veri yüklendi:', data);
                             applyState(data);
-                                // Sadece aktif tab'ı render et
-                                const activeTabId = document.querySelector('.tab-button.active')?.dataset.tabId;
-                                if (activeTabId) {
-                                    const tabInfo = ALL_TABS.find(t => t.id === activeTabId);
-                                    if (tabInfo && tabInfo.renderFunc) {
-                                        tabInfo.renderFunc();
-                                    }
+                            // Sadece aktif tab'ı render et
+                            const activeTabId = document.querySelector('.tab-button.active')?.dataset.tabId;
+                            if (activeTabId) {
+                                const tabInfo = ALL_TABS.find(t => t.id === activeTabId);
+                                if (tabInfo && tabInfo.renderFunc) {
+                                    tabInfo.renderFunc();
                                 }
-                                console.log('Veriler Firebase\'den güncellendi');
                             }
+                            console.log('Veriler Firebase\'den başarıyla yüklendi');
+                        } else {
+                            console.log('Firebase\'de veri bulunamadı, local veri yükleniyor');
+                            loadData();
                         }
+                    }).catch((error) => {
+                        console.error('Firebase veri yükleme hatası:', error);
+                        loadData();
                     });
+                } else {
+                    console.log('Firebase bağlantısı yok, local veri yükleniyor');
+                    loadData();
                 }
             } catch (error) {
                 console.error('Firebase yükleme hatası:', error);
-                // Hata durumunda local veriyi yükle
                 loadData();
             }
         }
@@ -658,6 +670,7 @@
             suppliers = appData.suppliers || [];
             customers = appData.customers || [];
             rawMaterials = appData.rawMaterials || [];
+            materials = appData.materials || [];
             products = appData.products || [];
             recipes = appData.recipes || []; // Kept for migration
             productionLog = appData.productionLog || [];
@@ -975,6 +988,7 @@
                 expenses,
                 materials,
                 productionPlans,
+                failedPrints, // Baskı hataları eklendi
                 // Yeni eklenen veri türleri
                 variants: products.flatMap(p => p.variants || []),
                 colors: products.flatMap(p => p.variants?.flatMap(v => v.colors || []) || []),
@@ -990,7 +1004,8 @@
                     totalPayments: payments.length,
                     totalExpenses: expenses.length,
                     totalSales: salesLog.length,
-                    totalProductionLog: productionLog.length
+                    totalProductionLog: productionLog.length,
+                    totalFailedPrints: failedPrints.length // Baskı hataları sayısı eklendi
                 }
             };
             const dataStr = JSON.stringify(appData, null, 2);
@@ -1569,11 +1584,132 @@
                 <td><button onclick="removeElement(this, 'sale')" class="bg-red-500 text-white px-2 py-1 text-xs rounded-md">Sil</button></td>
             </tr>`; 
         }
-        function getAddMaterialModalHTML(){ const accountOptions = accounts.map(acc => `<option value="${acc.id}">${acc.name}</option>`).join(''); return `<div class="modal"><h3 class="text-xl font-semibold mb-4">Tedarikçiden Malzeme Ekle</h3><div class="space-y-4"><div><label class="block text-sm font-medium">Tedarikçi Seçin</label><select id="supplierSelect" onchange="populateSupplierMaterials(this.value)" class="mt-1"></select></div><div><label class="block text-sm font-medium">Malzeme Seçin</label><select id="materialSelect" class="mt-1"></select></div><div><label class="block text-sm font-medium">Alınan Miktar</label><input type="number" id="initialStock" value="1" class="mt-1"></div><div><label class="block text-sm font-medium">Ödeme Yapılan Hesap</label><select id="addMaterialPaymentAccountId" class="mt-1"><option value="">Hesap Seçin</option>${accountOptions}</select></div></div><div class="mt-6 flex justify-end space-x-3"><button onclick="closeModal('addMaterialModal')" class="bg-gray-200 px-4 py-2 rounded-md">İptal</button><button onclick="addRawMaterialFromSupplier()" class="bg-blue-600 text-white px-4 py-2 rounded-md">Envantere Ekle</button></div></div>`; }
+        function getAddMaterialModalHTML(){ 
+            const accountOptions = accounts.map(acc => `<option value="${acc.id}">${acc.name}</option>`).join(''); 
+            return `<div class="modal">
+                <h3 class="text-xl font-semibold mb-4">Tedarikçiden Malzeme Ekle</h3>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium">Tedarikçi Seçin</label>
+                        <select id="supplierSelect" onchange="populateSupplierMaterials(this.value)" class="mt-1 w-full"></select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium">Malzeme Seçin</label>
+                        <select id="materialSelect" class="mt-1 w-full"></select>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium">Alınan Miktar</label>
+                        <input type="number" id="initialStock" value="1" class="mt-1 w-full">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium">Minimum Stok Seviyesi</label>
+                        <input type="number" id="minStock" value="0" placeholder="Uyarı için minimum stok" class="mt-1 w-full">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium">Ödeme Yapılan Hesap</label>
+                        <select id="addMaterialPaymentAccountId" class="mt-1 w-full">
+                            <option value="">Hesap Seçin</option>
+                            ${accountOptions}
+                        </select>
+                    </div>
+                </div>
+                <div class="mt-6 flex justify-end space-x-3">
+                    <button onclick="closeModal('addMaterialModal')" class="bg-gray-200 px-4 py-2 rounded-md">İptal</button>
+                    <button onclick="addRawMaterialFromSupplier()" class="bg-blue-600 text-white px-4 py-2 rounded-md">Envantere Ekle</button>
+                </div>
+            </div>`; 
+        }
         function getUpdateStockModalHTML() { const accountOptions = accounts.map(acc => `<option value="${acc.id}">${acc.name}</option>`).join(''); return `<div class="modal"><h3 class="text-xl font-semibold mb-4">Stok Güncelle</h3><input type="hidden" id="updateStockMaterialId"><div class="space-y-4"><div><label class="block text-sm font-medium">Yenileme Tarihi</label><input type="date" id="replenishDate" class="mt-1"></div><div><label class="block text-sm font-medium">Eklenen Stok Miktarı</label><input type="number" id="addedStock" placeholder="Örn: 2.5" class="mt-1"></div><div><label class="block text-sm font-medium">Yeni Birim Fiyat (TL)</label><input type="number" step="0.01" id="newPrice" placeholder="Örn: 550.75" class="mt-1"></div><div><label class="block text-sm font-medium">Ödeme Yapılan Hesap</label><select id="paymentAccountId" class="mt-1"><option value="">Hesap Seçin</option>${accountOptions}</select></div></div><div class="mt-6 flex justify-end space-x-3"><button onclick="closeModal('updateStockModal')" class="bg-gray-200 px-4 py-2 rounded-md">İptal</button><button onclick="handleStockUpdate()" class="bg-green-600 text-white px-4 py-2 rounded-md">Stoğu Güncelle</button></div></div>`; }
         function getAddSaleModalHTML() { 
             const accountOptions = accounts.filter(a => a.type !== 'kredikarti').map(acc => `<option value="${acc.id}">${acc.name}</option>`).join(''); 
             return `<div class="modal"><h3 class="text-xl font-semibold mb-4">Yeni Satış Kaydı</h3><form id="saleForm" onsubmit="event.preventDefault(); addSale();"><div class="grid grid-cols-2 gap-4"><input type="date" name="saleDate" required><select name="saleProductSelect" onchange="updateSalePrice(this.value); handleProductChangeInSale(this.value)" required></select><div id="variantSelectDiv" class="hidden col-span-2"><label class="block text-sm font-medium">Varyant Seçin (Anahtarlık gibi ürünler için)</label><select name="saleVariantSelect" onchange="updateSalePrice(document.querySelector('[name=saleProductSelect]').value)" required></select></div><input type="number" name="saleQuantity" placeholder="Adet" onchange="updateSaleCostAndProfit()" required><input type="number" step="0.01" name="saleUnitPrice" placeholder="Birim Fiyat (KDV Hariç)" onchange="updateSaleCostAndProfit()" required><input type="number" name="saleVatRate" value="20" placeholder="KDV Oranı (%)" onchange="updateSaleCostAndProfit()" required><select name="saleChannel" id="saleChannel" onchange="handleSaleChannelChange(this)"><option value="bireysel">Bireysel Satış</option><option value="platform">Platform</option><option value="cari">Cari Müşteri</option></select><div id="customerSelectDiv" class="hidden col-span-2"><input type="text" name="saleCustomerSelect" id="saleCustomerSelect" placeholder="Müşteri adı yazın..." autocomplete="off"></div><div id="platformInputDiv" class="hidden col-span-2"><input type="text" name="salePlatformName" id="salePlatformName" placeholder="Platform Adı"></div><select name="salePaymentMethod" onchange="togglePaymentAccount(this.value)" class="col-span-2"><option value="nakit">Nakit</option><option value="havale">EFT</option><option value="kredikarti">Kredi Kartı</option><option value="cariye">Cariye İşle</option></select><div id="paymentAccountDiv" class="col-span-2"><label class="block text-sm font-medium">Ödemenin Alındığı Hesap</label><select name="paymentAccountId">${accountOptions}</select></div></div><div id="saleCostInfo" class="mt-4 p-3 bg-gray-50 rounded-md hidden"><div class="grid grid-cols-2 gap-4 text-sm"><div><span class="font-medium text-gray-700">Birim Maliyet:</span> <span id="unitCostDisplay" class="text-red-600 font-semibold">0.00 TL</span></div><div><span class="font-medium text-gray-700">Toplam Maliyet:</span> <span id="totalCostDisplay" class="text-red-600 font-semibold">0.00 TL</span></div><div><span class="font-medium text-gray-700">Tahmini Kar:</span> <span id="profitDisplay" class="text-green-600 font-semibold">0.00 TL</span></div><div><span class="font-medium text-gray-700">Toplam Tutar:</span> <span id="totalAmountDisplay" class="text-blue-600 font-semibold">0.00 TL</span></div></div></div><div class="mt-6 flex justify-end space-x-3"><button type="button" onclick="closeModal('addSaleModal')" class="bg-gray-200 px-4 py-2 rounded-md">İptal</button><button type="submit" class="bg-blue-600 text-white px-4 py-2 rounded-md">Kaydet</button></div></form></div>`; 
+        }
+
+        function getQuickSaleModalHTML() {
+            const accountOptions = accounts.filter(a => a.type !== 'kredikarti').map(acc => `<option value="${acc.id}">${acc.name}</option>`).join('');
+            return `
+                <div class="modal">
+                    <h3 class="text-xl font-semibold mb-4">⚡ Hızlı Satış (Sistem Dışı Ürün)</h3>
+                    <form id="quickSaleForm" onsubmit="event.preventDefault(); addQuickSale();">
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Tarih</label>
+                                <input type="date" name="quickSaleDate" required class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Ürün Adı</label>
+                                <input type="text" name="quickProductName" placeholder="Örn: Özel Tasarım Heykel" required class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Adet</label>
+                                <input type="number" name="quickQuantity" placeholder="Adet" min="1" value="1" required class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Gramaj (Opsiyonel)</label>
+                                <input type="number" name="quickGramage" placeholder="Gram cinsinden" class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Birim Fiyat (KDV Hariç)</label>
+                                <input type="number" step="0.01" name="quickUnitPrice" placeholder="Birim fiyat" required class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">KDV Oranı (%)</label>
+                                <input type="number" name="quickVatRate" value="20" placeholder="KDV oranı" required class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Müşteri/Kanal</label>
+                                <select name="quickChannel" onchange="handleQuickSaleChannelChange(this)" class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                                    <option value="bireysel">Bireysel Satış</option>
+                                    <option value="platform">Platform</option>
+                                    <option value="cari">Cari Müşteri</option>
+                                </select>
+                            </div>
+                            <div id="quickCustomerDiv" class="hidden">
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Müşteri Adı</label>
+                                <input type="text" name="quickCustomerName" placeholder="Müşteri adı" class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                            </div>
+                            <div id="quickPlatformDiv" class="hidden">
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Platform Adı</label>
+                                <input type="text" name="quickPlatformName" placeholder="Platform adı" class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                            </div>
+                            <div class="col-span-full">
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Ödeme Yöntemi</label>
+                                <select name="quickPaymentMethod" onchange="toggleQuickPaymentAccount(this.value)" class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                                    <option value="nakit">Nakit</option>
+                                    <option value="havale">EFT</option>
+                                    <option value="kredikarti">Kredi Kartı</option>
+                                    <option value="cariye">Cariye İşle</option>
+                                </select>
+                            </div>
+                            <div id="quickPaymentAccountDiv" class="col-span-full">
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Ödemenin Alındığı Hesap</label>
+                                <select name="quickPaymentAccountId" class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                                    ${accountOptions}
+                                </select>
+                            </div>
+                            <div class="col-span-full">
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Notlar (Opsiyonel)</label>
+                                <textarea name="quickNotes" rows="2" placeholder="Ek notlar..." class="w-full px-3 py-2 border border-gray-300 rounded-md"></textarea>
+                            </div>
+                        </div>
+                        <div id="quickSaleSummary" class="mt-4 p-4 bg-green-50 rounded-lg">
+                            <h4 class="font-semibold text-green-800 mb-2">📊 Satış Özeti</h4>
+                            <div class="grid grid-cols-2 gap-2 text-sm">
+                                <div><span class="text-gray-700">Toplam Tutar (KDV Dahil):</span></div>
+                                <div><span id="quickTotalAmount" class="font-bold text-green-700">0.00 TL</span></div>
+                            </div>
+                        </div>
+                        <div class="mt-6 flex justify-end space-x-3">
+                            <button type="button" onclick="closeModal('quickSaleModal')" class="bg-gray-200 px-4 py-2 rounded-md hover:bg-gray-300">
+                                İptal
+                            </button>
+                            <button type="submit" class="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700">
+                                ⚡ Hızlı Satış Yap
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            `;
         }
 
         function getAddFailedPrintModalHTML() {
@@ -1944,7 +2080,36 @@
 
         function renderSuppliers() { const container = document.getElementById('suppliers'); container.innerHTML = `<h2 class="text-2xl font-semibold text-gray-700 mb-4">Tedarikçi ve Ürün Yönetimi</h2><p class="text-gray-600 mb-4">Hammaddelerinizi aldığınız tedarikçileri ve onların ürün kataloglarını buraya ekleyin.</p><button onclick="addSupplier()" class="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 mb-4">Yeni Tedarikçi Ekle</button><div id="suppliersContainer" class="mt-4 space-y-6">${(suppliers || []).map(getSupplierHTML).join('')}</div>`; makeTablesResizable();}
         function renderCustomers() { const container = document.getElementById('customers'); container.innerHTML = `<h2 class="text-2xl font-semibold text-gray-700 mb-4">Cari Müşteri Yönetimi</h2><p class="text-gray-600 mb-4">Sabit müşterilerinizi ve bakiyelerini buradan takip edin.</p><button onclick="addCustomer()" class="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 mb-4">Yeni Müşteri Ekle</button><div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">${(customers || []).map(getCustomerHTML).join('')}</div>`; }
-        function renderRawMaterials() { const container = document.getElementById('rawMaterials'); const calculatedMaterials = getCalculatedRawMaterialStocks(); container.innerHTML = `<h2 class="text-2xl font-semibold text-gray-700 mb-4">Hammadde Envanteri</h2><p class="text-gray-600 mb-4">Tedarikçilerden gelen ürünleri envanterinize ekleyin ve mevcut stokları güncelleyin.</p><button onclick="openAddMaterialFromSupplierModal()" class="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 mb-4">Tedarikçiden Yeni Malzeme Ekle</button><div class="table-container"><table class="resizable-table"><thead><tr><th>Malzeme Adı</th><th>Marka</th><th>Renk</th><th>Tür</th><th>Min Stok (Birim)</th><th>Mevcut Stok (Birim)</th><th>Birim</th><th>Ortalama Maliyet (TL/Birim)</th><th>Eylemler</th></tr></thead><tbody id="rawMaterialsTableBody">${calculatedMaterials.map(getRawMaterialHTML).join('')}</tbody></table></div>`; makeTablesResizable();}
+        function renderRawMaterials() { 
+            const container = document.getElementById('rawMaterials'); 
+            const calculatedMaterials = getCalculatedRawMaterialStocks(); 
+            container.innerHTML = `
+                <h2 class="text-2xl font-semibold text-gray-700 mb-4">Hammadde Envanteri</h2>
+                <p class="text-gray-600 mb-4">Tedarikçilerden gelen ürünleri envanterinize ekleyin ve mevcut stokları güncelleyin.</p>
+                <button onclick="openAddMaterialFromSupplierModal()" class="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 mb-4">Tedarikçiden Yeni Malzeme Ekle</button>
+                <div class="table-container">
+                    <table class="resizable-table">
+                        <thead>
+                            <tr>
+                                <th>Malzeme Adı</th>
+                                <th>Marka</th>
+                                <th>Renk</th>
+                                <th>Tür</th>
+                                <th>Min Stok (Birim)</th>
+                                <th>Mevcut Stok (Birim)</th>
+                                <th>Birim</th>
+                                <th>Ortalama Maliyet (TL/Birim)</th>
+                                <th>Eylemler</th>
+                            </tr>
+                        </thead>
+                        <tbody id="rawMaterialsTableBody">
+                            ${calculatedMaterials.map(getRawMaterialHTML).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            `; 
+            makeTablesResizable();
+        }
         function toggleProductExpansion(productId) {
             expandedProductId = expandedProductId === productId ? null : productId;
             renderProducts();
@@ -2435,7 +2600,38 @@
             salesData.sort((a, b) => new Date(b.date) - new Date(a.date));
             
             const container = document.getElementById('sales'); 
-            container.innerHTML = `<h2 class="text-2xl font-semibold text-gray-700 mb-4">Satış Kaydı</h2><p class="text-gray-600 mb-4">Yapılan satışları ve ödeme durumlarını buradan yönetin.</p><button onclick="openSaleModal()" class="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700 mb-4">Yeni Satış Kaydı Ekle</button><div class="table-container"><table class="resizable-table"><thead><tr><th>Tarih</th><th>Ürün Adı</th><th>Adet</th><th>Müşteri/Kanal</th><th>Ödeme Yöntemi</th><th>Toplam Maliyet</th><th>Gerçekleşen Kar</th><th>Toplam Tutar (KDV Dahil)</th><th>Eylem</th></tr></thead><tbody>${salesData.map(getSaleHTML).join('')}</tbody></table></div>`; 
+            container.innerHTML = `
+                <h2 class="text-2xl font-semibold text-gray-700 mb-4">Satış Kaydı</h2>
+                <p class="text-gray-600 mb-4">Yapılan satışları ve ödeme durumlarını buradan yönetin.</p>
+                <div class="flex flex-wrap gap-3 mb-4">
+                    <button onclick="openSaleModal()" class="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700">
+                        📦 Sistemdeki Ürünlerden Satış
+                    </button>
+                    <button onclick="openQuickSaleModal()" class="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700">
+                        ⚡ Hızlı Satış (Sistem Dışı Ürün)
+                    </button>
+                </div>
+                <div class="table-container">
+                    <table class="resizable-table">
+                        <thead>
+                            <tr>
+                                <th>Tarih</th>
+                                <th>Ürün Adı</th>
+                                <th>Adet</th>
+                                <th>Müşteri/Kanal</th>
+                                <th>Ödeme Yöntemi</th>
+                                <th>Toplam Maliyet</th>
+                                <th>Gerçekleşen Kar</th>
+                                <th>Toplam Tutar (KDV Dahil)</th>
+                                <th>Eylem</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${salesData.map(getSaleHTML).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            `; 
             makeTablesResizable();
         }
         function renderParameters() { const container = document.getElementById('parameters'); const coreParamsHTML = `<h3 class="text-xl font-semibold text-gray-700 mt-6 mb-2">Çekirdek Parametreler</h3><div class="table-container"><table id="parametersTable" class="resizable-table"><thead><tr><th>Parametre Adı</th><th>Değer</th><th>Birim</th></tr></thead><tbody><tr><td>Makine Ortalama kW</td><td><input type="number" step="0.01" value="${parameters.machineKw || 0}" onchange="updateParameter('machineKw', this.value)"></td><td>kW/saat</td></tr><tr><td>Elektrik kWh Fiyatı</td><td><input type="number" step="0.01" value="${parameters.electricityKwhPrice || 0}" onchange="updateParameter('electricityKwhPrice', this.value)"></td><td>TL/kWh</td></tr><tr><td>Makine İlk Maliyeti</td><td><input type="number" value="${parameters.machineInitialCost || 0}" onchange="updateParameter('machineInitialCost', this.value)"></td><td>TL</td></tr><tr><td>Makine Tahmini Ömrü</td><td><input type="number" value="${parameters.machineLifespanHours || 1}" onchange="updateParameter('machineLifespanHours', this.value)"></td><td>saat</td></tr></tbody></table></div>`; const customParamsHTML = `<div class="flex justify-between items-center mt-8 mb-2"><h3 class="text-xl font-semibold text-gray-700">Özel Maliyet Parametreleri</h3><button onclick="openCustomParamModal()" class="bg-indigo-600 text-white px-4 py-2 rounded-md hover:bg-indigo-700">Yeni Özel Parametre Ekle</button></div><div class="table-container"><table id="customParametersTable" class="resizable-table"><thead><tr><th>Parametre Adı</th><th>Türü</th><th>Varsayılan Değer</th><th>Eylemler</th></tr></thead><tbody>${customParameters.map(p => `<tr class="removable" data-id="${p.id}"><td>${p.name}</td><td>${p.type === 'parasal' ? 'Parasal Değer (TL)' : p.type === 'saatlik' ? 'Saatlik Ücret (TL)' : 'Yüzdelik (%)'}</td><td>${p.value}</td><td><button onclick="openCustomParamModal('${p.id}')" class="bg-yellow-500 text-white px-3 py-1 text-sm rounded-md mr-2">Düzenle</button><button onclick="removeElement(this, 'customParameter')" class="bg-red-500 text-white px-3 py-1 text-sm rounded-md">Sil</button></td></tr>`).join('')}</tbody></table></div>`; container.innerHTML = `<h2 class="text-2xl font-semibold text-gray-700 mb-4">Parametre Yönetimi</h2><p class="text-gray-600 mb-4">Üretim ve satış hesaplamalarında kullanılacak temel ve özel değerleri buradan yönetin.</p>${coreParamsHTML}${customParamsHTML}`; makeTablesResizable();}
@@ -2654,6 +2850,7 @@
             document.getElementById('addMaterialModal').innerHTML = getAddMaterialModalHTML(); 
             document.getElementById('updateStockModal').innerHTML = getUpdateStockModalHTML(); 
             document.getElementById('addSaleModal').innerHTML = getAddSaleModalHTML(); 
+            document.getElementById('quickSaleModal').innerHTML = getQuickSaleModalHTML();
             document.getElementById('addFailedPrintModal').innerHTML = getAddFailedPrintModalHTML();
             document.getElementById('accountModal').innerHTML = getAccountModalHTML(); 
             document.getElementById('customParamModal').innerHTML = getCustomParamModalHTML(); 
@@ -3110,6 +3307,7 @@
             const supplierId = document.getElementById('supplierSelect').value;
             const materialId = document.getElementById('materialSelect').value;
             const initialStock = parseFloat(document.getElementById('initialStock').value) || 0;
+            const minStock = parseFloat(document.getElementById('minStock').value) || 0;
             const paymentAccountId = document.getElementById('addMaterialPaymentAccountId').value;
             const supplier = suppliers.find(s => s.id === supplierId);
             const materialTemplate = supplier?.materials.find(m => m.id === materialId);
@@ -3140,7 +3338,7 @@
                     color: materialTemplate.color,
                     type: materialTemplate.type,
                     unit: materialTemplate.unit,
-                    minStock: 1,
+                    minStock: minStock,
                     averageCost: materialTemplate.price, // Initial average cost
                     stockHistory: [newStockEntry]
                 });
@@ -3160,6 +3358,148 @@
             handleSaleChannelChange({value: 'bireysel'}); 
             togglePaymentAccount('nakit'); 
             showModal('addSaleModal'); 
+        }
+
+        function openQuickSaleModal() {
+            const form = document.getElementById('quickSaleForm');
+            if (form) {
+                form.reset();
+                form.quickSaleDate.value = new Date().toISOString().slice(0, 10);
+                document.getElementById('quickCustomerDiv').classList.add('hidden');
+                document.getElementById('quickPlatformDiv').classList.add('hidden');
+                document.getElementById('quickPaymentAccountDiv').classList.remove('hidden');
+            }
+            showModal('quickSaleModal');
+        }
+
+        function handleQuickSaleChannelChange(select) {
+            const channel = select.value;
+            const customerDiv = document.getElementById('quickCustomerDiv');
+            const platformDiv = document.getElementById('quickPlatformDiv');
+            
+            customerDiv.classList.add('hidden');
+            platformDiv.classList.add('hidden');
+            
+            if (channel === 'cari') {
+                customerDiv.classList.remove('hidden');
+            } else if (channel === 'platform') {
+                platformDiv.classList.remove('hidden');
+            }
+        }
+
+        function toggleQuickPaymentAccount(paymentMethod) {
+            const accountDiv = document.getElementById('quickPaymentAccountDiv');
+            if (paymentMethod === 'cariye') {
+                accountDiv.classList.add('hidden');
+            } else {
+                accountDiv.classList.remove('hidden');
+            }
+        }
+
+        function addQuickSale() {
+            const form = document.getElementById('quickSaleForm');
+            const formData = new FormData(form);
+            
+            const date = formData.get('quickSaleDate');
+            const productName = formData.get('quickProductName');
+            const quantity = parseInt(formData.get('quickQuantity')) || 1;
+            const gramage = parseFloat(formData.get('quickGramage')) || 0;
+            const unitPrice = parseFloat(formData.get('quickUnitPrice')) || 0;
+            const vatRate = parseFloat(formData.get('quickVatRate')) || 20;
+            const channel = formData.get('quickChannel');
+            const paymentMethod = formData.get('quickPaymentMethod');
+            const paymentAccountId = formData.get('quickPaymentAccountId');
+            const notes = formData.get('quickNotes') || '';
+            
+            if (!productName || unitPrice <= 0) {
+                showMessageModal("Hata", "Lütfen ürün adı ve fiyat bilgilerini girin.");
+                return;
+            }
+            
+            // Müşteri/Platform bilgisi
+            let customerInfo = 'Bireysel Satış';
+            let customerId = null;
+            
+            if (channel === 'cari') {
+                const customerName = formData.get('quickCustomerName');
+                if (!customerName) {
+                    showMessageModal("Hata", "Lütfen müşteri adı girin.");
+                    return;
+                }
+                customerInfo = customerName;
+                // Müşteri varsa ID'yi bul, yoksa yeni müşteri oluştur
+                let customer = customers.find(c => c.name.toLowerCase() === customerName.toLowerCase());
+                if (!customer) {
+                    customer = {
+                        id: crypto.randomUUID(),
+                        name: customerName,
+                        balance: 0
+                    };
+                    customers.push(customer);
+                }
+                customerId = customer.id;
+            } else if (channel === 'platform') {
+                const platformName = formData.get('quickPlatformName');
+                if (platformName) {
+                    customerInfo = `Platform: ${platformName}`;
+                }
+            }
+            
+            // Hesaplama
+            const subtotal = quantity * unitPrice;
+            const vatAmount = subtotal * (vatRate / 100);
+            const totalAmount = subtotal + vatAmount;
+            
+            // Satış kaydı oluştur
+            const saleEntry = {
+                id: crypto.randomUUID(),
+                date: date,
+                productName: productName + (gramage > 0 ? ` (${gramage}gr)` : ''),
+                productId: null, // Sistem dışı ürün
+                variantId: null,
+                quantity: quantity,
+                unitPrice: unitPrice,
+                vatRate: vatRate,
+                totalAmount: totalAmount,
+                customerInfo: customerInfo,
+                customerId: customerId,
+                paymentMethod: paymentMethod,
+                paymentAccountId: paymentAccountId,
+                totalCost: 0, // Sistem dışı ürün, maliyet yok
+                realizedProfit: totalAmount, // Tüm tutar kar olarak kabul edilir
+                notes: notes,
+                isQuickSale: true // Hızlı satış işareti
+            };
+            
+            salesLog.push(saleEntry);
+            
+            // Ödeme işlemleri
+            if (paymentMethod !== 'cariye' && paymentAccountId) {
+                const account = accounts.find(a => a.id === paymentAccountId);
+                if (account) {
+                    if (!account.transactions) account.transactions = [];
+                    account.transactions.push({
+                        id: crypto.randomUUID(),
+                        date: date,
+                        type: 'Satış Geliri',
+                        description: `${productName} satışı`,
+                        amount: totalAmount
+                    });
+                }
+            } else if (paymentMethod === 'cariye' && customerId) {
+                const customer = customers.find(c => c.id === customerId);
+                if (customer) {
+                    customer.balance -= totalAmount;
+                }
+            }
+            
+            saveData();
+            renderSalesLog();
+            renderCustomers();
+            renderCashFlow();
+            closeModal('quickSaleModal');
+            
+            showNotification(`⚡ Hızlı satış başarıyla kaydedildi! Toplam: ${totalAmount.toFixed(2)} TL`, 'success', 3000);
         }
         function addSale() { 
             const form = document.getElementById('saleForm'); 
@@ -4123,6 +4463,10 @@
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-2">Birim Fiyat (TL)</label>
                                 <input type="number" id="materialUnitPrice" step="0.01" required class="w-full px-3 py-2 border border-gray-300 rounded-md">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">Minimum Stok Seviyesi</label>
+                                <input type="number" id="materialMinStock" step="0.01" value="0" placeholder="Uyarı için minimum stok" class="w-full px-3 py-2 border border-gray-300 rounded-md">
                             </div>
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-2">Hesap</label>
@@ -5130,6 +5474,7 @@
                 quantity: parseFloat(form.materialQuantity.value),
                 unit: form.materialUnit.value,
                 unitPrice: parseFloat(form.materialUnitPrice.value),
+                minStock: parseFloat(document.getElementById('materialMinStock').value) || 0,
                 description: form.materialDescription.value,
                 accountId: form.materialAccountId.value
             };

@@ -363,7 +363,26 @@
             }
             
             try {
-                const appData = { suppliers, customers, rawMaterials, products, recipes, productionLog, salesLog, accounts, parameters, customParameters, payments, expenses, materials, productionPlans, failedPrints };
+                const appData = { 
+                    suppliers, 
+                    customers, 
+                    rawMaterials, 
+                    products, 
+                    recipes, 
+                    productionLog, 
+                    salesLog, 
+                    accounts, 
+                    parameters, 
+                    customParameters, 
+                    payments, 
+                    expenses, 
+                    materials, 
+                    productionPlans, 
+                    failedPrints,
+                    // Veri bütünlüğü için export bilgisi
+                    lastSaved: new Date().toISOString(),
+                    version: "v30"
+                };
                 
                 // Local storage'a kaydet
             localStorage.setItem(LOCAL_DATA_KEY, JSON.stringify(appData));
@@ -678,7 +697,6 @@
             accounts = appData.accounts || [];
             payments = appData.payments || [];
             expenses = appData.expenses || [];
-            materials = appData.materials || [];
             productionPlans = appData.productionPlans || [];
             failedPrints = appData.failedPrints || [];
             parameters = appData.parameters || {};
@@ -785,6 +803,47 @@
                     console.log('🔍 Hesap transaction array\'i oluşturuldu:', account.name);
                 }
             });
+            
+            // Veri bütünlüğü kontrolü
+            validateDataIntegrity();
+        }
+
+        // Veri bütünlüğü kontrolü
+        function validateDataIntegrity() {
+            console.log('🔍 Veri Bütünlüğü Kontrolü:');
+            
+            // Tüm gerekli array'lerin var olduğunu kontrol et
+            const requiredArrays = [
+                'suppliers', 'customers', 'rawMaterials', 'materials', 
+                'products', 'productionLog', 'salesLog', 'accounts', 
+                'payments', 'expenses', 'productionPlans', 'failedPrints'
+            ];
+            
+            requiredArrays.forEach(arrayName => {
+                if (!window[arrayName]) {
+                    console.warn(`⚠️ ${arrayName} array'i bulunamadı!`);
+                } else {
+                    console.log(`✅ ${arrayName}: ${window[arrayName].length} kayıt`);
+                }
+            });
+            
+            // Hesap transaction'larını kontrol et
+            accounts.forEach(account => {
+                if (!account.transactions) {
+                    console.warn(`⚠️ ${account.name} hesabında transaction array'i yok!`);
+                    account.transactions = [];
+                }
+            });
+            
+            // Ürün varyantlarını kontrol et
+            products.forEach(product => {
+                if (!product.variants) {
+                    console.warn(`⚠️ ${product.name} ürününde variants array'i yok!`);
+                    product.variants = [];
+                }
+            });
+            
+            console.log('🔍 Veri bütünlüğü kontrolü tamamlandı.');
         }
 
         function handleClearAllData() {
@@ -987,15 +1046,16 @@
                 customers, 
                 rawMaterials, 
                 products, 
+                recipes, // recipes eksikti!
                 productionLog, 
                 salesLog, 
                 accounts, 
                 parameters, 
                 customParameters, 
-                payments,
-                expenses,
-                materials,
-                productionPlans,
+                payments, 
+                expenses, 
+                materials, 
+                productionPlans, 
                 failedPrints, // Baskı hataları eklendi
                 // Yeni eklenen veri türleri
                 variants: products.flatMap(p => p.variants || []),

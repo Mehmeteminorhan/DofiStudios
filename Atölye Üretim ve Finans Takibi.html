@@ -426,10 +426,17 @@
         function saveDataToFirebase(data) {
             try {
                 if (window.firebaseDatabase) {
+                    // Her zaman güncel timestamp ekle
+                    const dataWithTimestamp = {
+                        ...data,
+                        lastSaved: new Date().toISOString(),
+                        version: "v30"
+                    };
+                    
                     const dataRef = window.firebaseDatabase.ref('workshopData');
-                    dataRef.set(data)
+                    dataRef.set(dataWithTimestamp)
                         .then(() => {
-                            console.log('Veriler Firebase\'e kaydedildi');
+                            console.log('Veriler Firebase\'e kaydedildi - Timestamp:', dataWithTimestamp.lastSaved);
                         })
                         .catch((error) => {
                             console.error('Firebase kaydetme hatası:', error);

@@ -449,16 +449,51 @@
                         const data = snapshot.val();
                         if (data) {
                             console.log('Firebase\'den veri yüklendi:', data);
-                            applyState(data);
-                            // Sadece aktif tab'ı render et
-                            const activeTabId = document.querySelector('.tab-button.active')?.dataset.tabId;
-                            if (activeTabId) {
-                                const tabInfo = ALL_TABS.find(t => t.id === activeTabId);
-                                if (tabInfo && tabInfo.renderFunc) {
-                                    tabInfo.renderFunc();
+                            
+                            // Local storage'daki veri ile karşılaştır
+                            const localData = localStorage.getItem(LOCAL_DATA_KEY);
+                            if (localData) {
+                                try {
+                                    const parsedLocalData = JSON.parse(localData);
+                                    const localTimestamp = parsedLocalData.lastSaved ? new Date(parsedLocalData.lastSaved).getTime() : 0;
+                                    const firebaseTimestamp = data.lastSaved ? new Date(data.lastSaved).getTime() : 0;
+                                    
+                                    console.log('Local timestamp:', localTimestamp, 'Firebase timestamp:', firebaseTimestamp);
+                                    
+                                    // Sadece Firebase verisi daha yeniyse yükle
+                                    if (firebaseTimestamp > localTimestamp) {
+                                        console.log('Firebase verisi daha güncel, yükleniyor');
+                                        applyState(data);
+                                        // Sadece aktif tab'ı render et
+                                        const activeTabId = document.querySelector('.tab-button.active')?.dataset.tabId;
+                                        if (activeTabId) {
+                                            const tabInfo = ALL_TABS.find(t => t.id === activeTabId);
+                                            if (tabInfo && tabInfo.renderFunc) {
+                                                tabInfo.renderFunc();
+                                            }
+                                        }
+                                        console.log('Veriler Firebase\'den başarıyla yüklendi');
+                                    } else {
+                                        console.log('Local veri daha güncel veya eşit, Firebase verisi yüklenmedi');
+                                    }
+                                } catch (e) {
+                                    console.error('Local veri parse hatası:', e);
+                                    // Hata varsa Firebase verisini yükle
+                                    applyState(data);
                                 }
+                            } else {
+                                // Local veri yoksa Firebase verisini yükle
+                                applyState(data);
+                                // Sadece aktif tab'ı render et
+                                const activeTabId = document.querySelector('.tab-button.active')?.dataset.tabId;
+                                if (activeTabId) {
+                                    const tabInfo = ALL_TABS.find(t => t.id === activeTabId);
+                                    if (tabInfo && tabInfo.renderFunc) {
+                                        tabInfo.renderFunc();
+                                    }
+                                }
+                                console.log('Veriler Firebase\'den başarıyla yüklendi');
                             }
-                            console.log('Veriler Firebase\'den başarıyla yüklendi');
                         } else {
                             console.log('Firebase\'de veri bulunamadı, local veri yükleniyor');
                             loadData();
@@ -813,35 +848,41 @@
             console.log('🔍 Veri Bütünlüğü Kontrolü:');
             
             // Tüm gerekli array'lerin var olduğunu kontrol et
-            const requiredArrays = [
-                'suppliers', 'customers', 'rawMaterials', 'materials', 
-                'products', 'productionLog', 'salesLog', 'accounts', 
-                'payments', 'expenses', 'productionPlans', 'failedPrints'
-            ];
+            const dataArrays = {
+                suppliers, customers, rawMaterials, materials, 
+                products, productionLog, salesLog, accounts, 
+                payments, expenses, productionPlans, failedPrints
+            };
             
-            requiredArrays.forEach(arrayName => {
-                if (!window[arrayName]) {
+            Object.entries(dataArrays).forEach(([arrayName, arrayValue]) => {
+                if (!arrayValue) {
                     console.warn(`⚠️ ${arrayName} array'i bulunamadı!`);
+                } else if (!Array.isArray(arrayValue)) {
+                    console.warn(`⚠️ ${arrayName} array değil!`);
                 } else {
-                    console.log(`✅ ${arrayName}: ${window[arrayName].length} kayıt`);
+                    console.log(`✅ ${arrayName}: ${arrayValue.length} kayıt`);
                 }
             });
             
             // Hesap transaction'larını kontrol et
-            accounts.forEach(account => {
-                if (!account.transactions) {
-                    console.warn(`⚠️ ${account.name} hesabında transaction array'i yok!`);
-                    account.transactions = [];
-                }
-            });
+            if (accounts && Array.isArray(accounts)) {
+                accounts.forEach(account => {
+                    if (!account.transactions) {
+                        console.warn(`⚠️ ${account.name} hesabında transaction array'i yok!`);
+                        account.transactions = [];
+                    }
+                });
+            }
             
             // Ürün varyantlarını kontrol et
-            products.forEach(product => {
-                if (!product.variants) {
-                    console.warn(`⚠️ ${product.name} ürününde variants array'i yok!`);
-                    product.variants = [];
-                }
-            });
+            if (products && Array.isArray(products)) {
+                products.forEach(product => {
+                    if (!product.variants) {
+                        console.warn(`⚠️ ${product.name} ürününde variants array'i yok!`);
+                        product.variants = [];
+                    }
+                });
+            }
             
             console.log('🔍 Veri bütünlüğü kontrolü tamamlandı.');
         }
@@ -3481,7 +3522,8 @@
             }
 
             const cost = initialStock * materialTemplate.price;
-            const newStockEntry = { id: crypto.randomUUID(), date: new Date().toISOString().slice(0, 10), quantity: initialStock, price: materialTemplate.price, paymentAccountId, cost };
+            const date = new Date().toISOString().slice(0, 10);
+            const newStockEntry = { id: crypto.randomUUID(), date: date, quantity: initialStock, price: materialTemplate.price, paymentAccountId, cost };
 
             // Check if this material from this supplier already exists in inventory
             let existingMaterial = rawMaterials.find(rm => rm.templateId === materialId && rm.supplierId === supplierId);
@@ -3504,6 +3546,19 @@
                     minStock: minStock,
                     averageCost: materialTemplate.price, // Initial average cost
                     stockHistory: [newStockEntry]
+                });
+            }
+
+            // Hesap transaction'ı da ekle
+            const account = accounts.find(a => a.id === paymentAccountId);
+            if (account) {
+                if (!account.transactions) account.transactions = [];
+                account.transactions.push({
+                    id: crypto.randomUUID(),
+                    date: date,
+                    type: 'Alım',
+                    description: `${materialTemplate.name} - ${materialTemplate.brand} (${initialStock} ${materialTemplate.unit || 'adet'})`,
+                    amount: -cost // Negatif tutar (çıkış)
                 });
             }
 
@@ -4049,24 +4104,26 @@
                 let currentBalance = acc.initialBalance || 0;
                 // Sadece kasaya giren satışları ekle (Cari hariç)
                 salesLog.forEach(sale => { if (sale.paymentAccountId === accountId && sale.paymentMethod !== 'cariye') currentBalance += sale.totalAmount; });
-                rawMaterials.flatMap(rm => rm.stockHistory || []).forEach(p => { if (p.paymentAccountId === accountId) currentBalance -= p.cost; });
+                // Payments'tan işlemleri ekle/düş
                 payments.forEach(p => { 
                     if (p.paymentAccountId === accountId) {
                         if (p.type === 'Malzeme') {
                             currentBalance -= p.amount; // Malzeme alımı hesaptan düşer
-                        } else {
-                            currentBalance += p.amount; // Diğer ödemeler hesaba eklenir
+                        } else if (p.customerId) {
+                            // Müşteri tahsilatları (eski kayıtlar için - yeni kayıtlar transactions'ta)
+                            // Çift saymayı önlemek için transaction'da olup olmadığını kontrol et
+                            const existsInTransactions = acc.transactions?.some(t => 
+                                t.paymentId === p.id || // PaymentId ile kontrol (yeni kayıtlar için)
+                                (t.type === 'Tahsilat' && Math.abs(t.amount - p.amount) < 0.01 && t.date === p.date) // Tarih/tutar ile kontrol (eski kayıtlar için)
+                            );
+                            if (!existsInTransactions) {
+                                currentBalance += p.amount;
+                            }
                         }
                     }
                 });
-                // Giderleri hesaptan düş (malzeme alımları hariç - onlar zaten payments'ta)
-                expenses.forEach(expense => { 
-                    if (expense.accountId === accountId && expense.category !== 'Malzeme') {
-                        currentBalance -= expense.amount; 
-                    }
-                });
                 
-                // Hesap işlemlerini de kontrol et (gider kayıtları dahil)
+                // Hesap işlemlerini de kontrol et (hammadde alımları, gider kayıtları, tahsilatlar dahil)
                 if (acc.transactions) {
                     acc.transactions.forEach(transaction => {
                         currentBalance += transaction.amount; // Negatif değerler zaten hesaptan düşer
@@ -4562,7 +4619,8 @@
                     date: newPayment.date,
                     type: 'Tahsilat',
                     description: `Müşteri: ${customer?.name || 'Bilinmeyen'} - ${newPayment.notes || 'Ödeme'}`,
-                    amount: newPayment.amount
+                    amount: newPayment.amount,
+                    paymentId: newPayment.id // Çift sayımı önlemek için
                 });
             }
             
@@ -5449,9 +5507,9 @@
             // Sadece hesap transaction'larını kullan (çift kayıt önlemek için)
             // purchases array'ini kaldırdık çünkü artık hesap transaction'larına ekleniyor
             
-            // Satış kayıtlarını ekle (hem cariye hem de hızlı satışlar)
+            // Satış kayıtlarını ekle (sadece kasaya giren satışlar - cariye hariç)
             const sales = salesLog
-                .filter(s => s.paymentAccountId === accountId) // Bu hesaba ait tüm satışlar
+                .filter(s => s.paymentAccountId === accountId && s.paymentMethod !== 'cariye') // Cariye satışları hariç tut
                 .map(s => ({ 
                     ...s, 
                     type: s.isQuickSale ? 'Satış Geliri' : 'Satış', // Hızlı satış için 'Satış Geliri' türü

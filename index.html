@@ -5524,8 +5524,17 @@
                     desc: s.isQuickSale ? s.productName : (products.find(p=>p.id === s.productId)?.name || 'Bilinmeyen Ürün')
                 }));
             
+            // Çift kayıt önlemek için: zaten transaction'da olan tahsilatları filtrele
             const customerPayments = payments
-                .filter(p => p.customerId && p.paymentAccountId === accountId)
+                .filter(p => {
+                    if (!p.customerId || p.paymentAccountId !== accountId) return false;
+                    // Bu ödeme zaten account.transactions'da varsa ekleme
+                    const existsInTransactions = accountTransactions.some(t => 
+                        t.paymentId === p.id || // PaymentId ile kontrol
+                        (t.type === 'Tahsilat' && Math.abs(t.amount - p.amount) < 0.01 && t.date === p.date)
+                    );
+                    return !existsInTransactions;
+                })
                 .map(p => ({ 
                     ...p, 
                     type: 'Tahsilat', 
@@ -5533,8 +5542,17 @@
                     desc: `${customers.find(c=>c.id === p.customerId)?.name || 'Bilinmeyen Müşteri'} - ${p.notes || 'Ödeme'}` 
                 }));
             
+            // Çift kayıt önlemek için: zaten transaction'da olan malzeme ödemelerini filtrele
             const materialPayments = payments
-                .filter(p => p.type === 'Malzeme' && p.paymentAccountId === accountId)
+                .filter(p => {
+                    if (p.type !== 'Malzeme' || p.paymentAccountId !== accountId) return false;
+                    // Bu ödeme zaten account.transactions'da varsa ekleme
+                    const existsInTransactions = accountTransactions.some(t => 
+                        t.paymentId === p.id || // PaymentId ile kontrol
+                        (t.type === 'Malzeme' && Math.abs(Math.abs(t.amount) - p.amount) < 0.01 && t.date === p.date)
+                    );
+                    return !existsInTransactions;
+                })
                 .map(p => ({ ...p, type: 'Malzeme', txId: p.id, desc: p.notes }));
             
             const transactions = [...sales, ...customerPayments, ...materialPayments, ...accountTransactions].sort((a, b) => new Date(b.date) - new Date(a.date));
